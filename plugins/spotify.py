@@ -610,7 +610,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 run_cancel_flags = {}
 
 @Client.on_message(filters.command("run") & filters.reply)
-async def run_tracks(client, message):
+async def run_tracksssf(client, message):
     if not message.reply_to_message.document:
         await message.reply("⚠️ Please reply to a `.txt` file containing track IDs.")
         return
