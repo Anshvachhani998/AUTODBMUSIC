@@ -749,8 +749,8 @@ async def run_tracksssf(client, message):
                 await status_msg.edit(
                     f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
                     f"✅ Sent: {sent_count}\n"
-                    f"⏭️ Skipped: {len(skipped_tracks)} ({skipped_preview})\n"
-                    f"❌ Failed: {len(failed_tracks)} ({failed_preview})\n"
+                    f"⏭️ Skipped: {len(skipped_tracks)}\n"
+                    f"❌ Failed: {len(failed_tracks)}\n"
                     f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
                     reply_markup=cancel_keyboard
                 )
