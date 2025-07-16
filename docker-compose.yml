@@ -1,8 +1,8 @@
 version: '3'
 services:
-  spotifydl:
+  dbextractor:
     build: .
-    container_name: SpotifyDL
+    container_name: AUTODBMUSIC
     restart: always
     volumes:
       - .:/app
