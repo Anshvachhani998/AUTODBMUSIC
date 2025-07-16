@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 async def get_song_download_url_by_spotify_url(spotify_url: str):
     logger.info(f"url {spotify_url}")
     api_urls = [
-        f"https://tet-kpy4.onrender.com/spotify?url={spotify_url}",
-        f"https://tet-kpy4.onrender.com/spotify2?url={spotify_url}"
+        f"https://spotify.koyeb.app/spotify?url={spotify_url}",
+        f"https://spotify.koyeb.app/spotify2?url={spotify_url}"
     ]
 
     random.shuffle(api_urls)
