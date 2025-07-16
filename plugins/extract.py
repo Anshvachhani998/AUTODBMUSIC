@@ -30,7 +30,7 @@ def extract_artist_id(url):
         return match.group(1)
     return None
 
-@app.on_message(filters.command("aritist") & filters.private)
+@app.on_message(filters.command("artist") & filters.private)
 async def artist_songs(client, message):
     if len(message.command) < 2:
         await message.reply("Please send artist Spotify link.\nUsage: /ar <artist_spotify_link>")
