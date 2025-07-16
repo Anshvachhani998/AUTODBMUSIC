@@ -15,10 +15,10 @@ fi
 
 # Pull the latest updates
 echo "🔄 Updating repository..."
-git pull https://github.com/Anshvachhani998/SpotifyDL
+git pull https://github.com/Anshvachhani998/AUTODBMUSIC
 
 # Restart Docker Container
 echo "🚀 Restarting SpotifyDL Docker container..."
-docker restart SpotifyDL
+docker restart AUTODBMUSIC
 
 echo "✅ Update & Restart Completed!"
