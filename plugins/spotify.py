@@ -326,19 +326,21 @@ async def handle_cancel_download(client, callback_query):
 
 # --- Main Message Handler with concurrency lock ---
 
-@Client.on_message(filters.private & filters.text)
+import re
+
+# Regex jo playlist aur track dono ko cover karta hai
+SPOTIFY_REGEX = r"https?://open\.spotify\.com/(playlist|track)/[a-zA-Z0-9]+"
+
+@Client.on_message(filters.private & filters.regex(SPOTIFY_REGEX))
 async def handle_spotify_link(client, message):
     user_id = message.from_user.id
     text = message.text.strip()
 
-    playlist_pattern = r"https?://open\.spotify\.com/playlist/[a-zA-Z0-9]+"
-    track_pattern = r"https?://open\.spotify\.com/track/[a-zA-Z0-9]+"
+    # Playlist ya track ye pehle se hi matched hai filter me,
+    # ab sirf check karna hai kaun sa hai
 
-    # Locking omitted for brevity — add your lock system here if needed
-
-    if re.search(playlist_pattern, text):
-        # Handle playlist
-        await message.reply("⏳ Fetching Spotify playlist info...")
+    if "playlist" in text:
+        await message.reply("⏳ Fetching Spotify playlist info...", reply_to_message_id=message.message_id)
         try:
             image_url, name, songs, track_ids = get_playlist_info(text)
             image_data = requests.get(image_url).content
@@ -347,56 +349,56 @@ async def handle_spotify_link(client, message):
 
             reply = await message.reply_photo(
                 photo="thumb.jpg",
-                caption=f"🎧 **Playlist**: {name}\n📀 Total Songs: {len(songs)}\n\n🎵 Select a song below:"
+                caption=f"🎧 **Playlist**: {name}\n📀 Total Songs: {len(songs)}\n\n🎵 Select a song below:",
+                reply_to_message_id=message.message_id
             )
             keyboard = generate_keyboard(songs, track_ids, page=0, playlist_message_id=reply.id)
             await reply.edit_reply_markup(reply_markup=keyboard)
 
             song_cache[reply.id] = {"songs": songs, "track_ids": track_ids, "playlist_message_id": reply.id}
         except Exception as e:
-            await message.reply(f"⚠️ Error: {e}")
+            await message.reply(f"⚠️ Error: {e}", reply_to_message_id=message.message_id)
 
-        return
+    else:  # track link
+        ansh = await message.reply("⏳ Fetching Spotify track info...", reply_to_message_id=message.message_id)
 
-    elif re.search(track_pattern, text):
-        # Handle single track directly
-        ansh = await message.reply("⏳ Fetching Spotify track info...")
+        track_id_match = re.search(r"track/([a-zA-Z0-9]+)", text)
+        if not track_id_match:
+            await message.reply("⚠️ Invalid Spotify track link.", reply_to_message_id=message.message_id)
+            await ansh.delete()
+            return
 
-        # Extract track_id from URL
-        track_id = re.search(r"track/([a-zA-Z0-9]+)", text).group(1)
+        track_id = track_id_match.group(1)
         spotify_url = f"https://open.spotify.com/track/{track_id}"
 
-        # Step 1: Check DB cache for dump file_id
         dump_file_id = await db.get_dump_file_id(track_id)
         if dump_file_id:
             try:
                 await client.send_audio(
                     user_id,
                     dump_file_id,
-                    caption=f"🎵 **(From Cache)**"
+                    caption=f"🎵 **(From Cache)**",
+                    reply_to_message_id=message.message_id
                 )
                 await ansh.delete()
                 return
             except Exception as e:
                 logging.info(f"Cache send failed: {e}")
-                # Remove from DB if file is missing
                 await db.col.delete_one({"track_id": track_id})
 
-        # Step 2: Fetch track info and download
         track_info = extract_track_info(spotify_url)
         if not track_info:
-            await message.reply("⚠️ Could not fetch track info. Please check the link.")
+            await message.reply("⚠️ Could not fetch track info. Please check the link.", reply_to_message_id=message.message_id)
             await ansh.delete()
             return
 
         title, artist, thumb_url = track_info
-
-        wait_msg = await message.reply(f"🔄 Please wait... fetching your song: **{title}**")
+        wait_msg = await message.reply(f"🔄 Please wait... fetching your song: **{title}**", reply_to_message_id=message.message_id)
         await ansh.delete()
 
         try:
             song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
-        except Exception as e:
+        except Exception:
             await wait_msg.edit("⚠️ An error occurred while fetching the song.")
             return
 
@@ -429,7 +431,8 @@ async def handle_spotify_link(client, message):
                     caption=f"🎵 **{song_title}**\n👤 {artist}",
                     thumb=thumb_path,
                     title=song_title,
-                    performer=artist
+                    performer=artist,
+                    reply_to_message_id=message.message_id
                 )
             else:
                 sent_msg = await client.send_audio(
@@ -437,10 +440,10 @@ async def handle_spotify_link(client, message):
                     download_path,
                     caption=f"🎵 **{song_title}**\n👤 {artist}",
                     title=song_title,
-                    performer=artist
+                    performer=artist,
+                    reply_to_message_id=message.message_id
                 )
 
-            # Step 3: Upload fresh to dump channel with track_id in caption
             dump_caption = f"🎵 **{song_title}**\n👤 {artist}\n🆔 {track_id}"
             dump_msg = await client.send_audio(
                 DUMP_CHANNEL_ID,
@@ -451,9 +454,7 @@ async def handle_spotify_link(client, message):
                 performer=artist
             )
 
-            # Step 4: Save dump file_id in DB for future
             await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
-
             await wait_msg.delete()
 
         except Exception as e:
@@ -466,10 +467,6 @@ async def handle_spotify_link(client, message):
             if os.path.exists(thumb_path):
                 os.remove(thumb_path)
 
-        return
-
-    else:
-        await message.reply("⚠️ Please send a valid Spotify track or playlist link.")
 
 
 
