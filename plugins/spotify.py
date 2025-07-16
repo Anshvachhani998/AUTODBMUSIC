@@ -610,6 +610,26 @@ run_cancel_flags = {}
 import tempfile
 import os
 
+import time
+
+def format_seconds(seconds: int) -> str:
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if secs > 0 or not parts:
+        parts.append(f"{secs}s")
+
+    return ' '.join(parts)
+
 @Client.on_message(filters.command("run") & filters.reply)
 async def run_tracksssf(client, message):
     if not message.reply_to_message.document:
@@ -634,6 +654,9 @@ async def run_tracksssf(client, message):
         [[InlineKeyboardButton("❌ Cancel Batch", callback_data=f"cancel_run:{user_id}")]]
     )
 
+    # 🕒 Note start time
+    start_time = time.time()
+
     status_msg = await message.reply(
         f"📂 **Batch Download Started!**\n"
         f"🎵 Total: **{total}**\n"
@@ -644,12 +667,15 @@ async def run_tracksssf(client, message):
 
     for idx, track_id in enumerate(track_ids, 1):
         if run_cancel_flags.get(key):
+            end_time = time.time()
+            formatted_time = format_seconds(int(end_time - start_time))
             await status_msg.edit(
                 f"❌ Batch cancelled by user.\n"
                 f"🎵 Total: **{total}**\n"
                 f"✅ Sent: **{sent_count}**\n"
                 f"⏭️ Skipped: **{len(skipped_tracks)}**\n"
-                f"❌ Failed: **{len(failed_tracks)}**",
+                f"❌ Failed: **{len(failed_tracks)}**\n"
+                f"⏳ Time Taken: **{formatted_time}**",
                 reply_markup=None
             )
             break
@@ -751,17 +777,19 @@ async def run_tracksssf(client, message):
             failed_tracks.append(track_id)
 
     if not run_cancel_flags.get(key):
+        end_time = time.time()
+        formatted_time = format_seconds(int(end_time - start_time))
         await status_msg.edit(
             f"✅ **Batch Done!**\n"
             f"🎵 Total: **{total}**\n"
             f"✅ Sent: **{sent_count}**\n"
             f"⏭️ Skipped: **{len(skipped_tracks)}**\n"
-            f"❌ Failed: **{len(failed_tracks)}**",
+            f"❌ Failed: **{len(failed_tracks)}**\n"
+            f"⏳ Time Taken: **{formatted_time}**",
             reply_markup=None
         )
 
     if failed_tracks:
-        # 📝 Create a temp txt file with failed IDs
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w") as tmp_file:
             tmp_file.write("\n".join(failed_tracks))
@@ -776,7 +804,6 @@ async def run_tracksssf(client, message):
 
     run_cancel_flags.pop(key, None)
     os.remove(file)
-
 
 
 # Cancel Button handler
