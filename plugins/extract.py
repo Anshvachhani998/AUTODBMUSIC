@@ -5,6 +5,11 @@ import re
 import logging
 import asyncio
 from spotipy.exceptions import SpotifyException
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+import asyncio
+from database.db import db 
+import os
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,7 +30,7 @@ def extract_artist_id(url):
         return match.group(1)
     return None
 
-@app.on_message(filters.command("artist") & filters.private)
+@app.on_message(filters.command("aritist") & filters.private)
 async def artist_songs(client, message):
     if len(message.command) < 2:
         await message.reply("Please send artist Spotify link.\nUsage: /ar <artist_spotify_link>")
@@ -120,3 +125,123 @@ async def artist_songs(client, message):
     except Exception as e:
         logger.error(f"Error: {e}")
         await status_msg.edit(f"❌ Error: `{e}`")
+
+
+
+
+user_batch = {}
+
+
+
+@app.on_message(filters.command("extract"))
+async def start_batch(client, message):
+    user_id = message.from_user.id
+    user_batch[user_id] = []
+    await message.reply("📥 Please send your first Spotify Playlist or Album link.")
+
+@app.on_message(filters.text & filters.private)
+async def handle_links(client, message):
+    user_id = message.from_user.id
+
+    if user_id not in user_batch:
+        await message.reply("⚠️ Please start with `/extract` first.")
+        return
+
+    link = message.text.strip()
+    fetched_ids = []
+    total_tracks_count = 0
+
+    try:
+        if "playlist" in link:
+            playlist_id = link.split("playlist/")[1].split("?")[0]
+            playlist = sp.playlist(playlist_id)
+            total_tracks_count = playlist['tracks']['total']
+
+            results = sp.playlist_tracks(playlist_id)
+            while results:
+                for item in results['items']:
+                    track = item['track']
+                    if track and track['id']:
+                        fetched_ids.append(track['id'])
+                if results['next']:
+                    results = sp.next(results)
+                else:
+                    results = None
+
+        elif "album" in link:
+            album_id = link.split("album/")[1].split("?")[0]
+            album = sp.album(album_id)
+            total_tracks_count = album['total_tracks']
+
+            results = sp.album_tracks(album_id)
+            while results:
+                for item in results['items']:
+                    if item and item['id']:
+                        fetched_ids.append(item['id'])
+                if results['next']:
+                    results = sp.next(results)
+                else:
+                    results = None
+
+        else:
+            await message.reply("❌ Invalid link. Send a valid Spotify playlist or album link.")
+            return
+
+    except Exception as e:
+        await message.reply(f"⚠️ Error: `{e}`")
+        return
+
+    already_in_db = 0
+    new_ids = []
+
+    for tid in fetched_ids:
+        dump_file_id = await db.get_dump_file_id(tid)
+        if dump_file_id:
+            already_in_db += 1
+        else:
+            if tid not in user_batch[user_id]:
+                new_ids.append(tid)
+
+    user_batch[user_id].extend(new_ids)
+
+    await message.reply(
+        f"✅ Total fetched: {total_tracks_count}\n"
+        f"⏭️ Already in DB: {already_in_db}\n"
+        f"🆕 Added new: {len(new_ids)}\n"
+        f"👉 Current combined: {len(user_batch[user_id])}\n\n"
+        f"Add more?",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("➕ Add More", callback_data=f"addmore_{user_id}")],
+                [InlineKeyboardButton("✅ Done", callback_data=f"done_{user_id}")]
+            ]
+        )
+    )
+
+@app.on_callback_query(filters.regex(r"addmore_(\d+)"))
+async def add_more(client, callback_query):
+    await callback_query.answer()
+    await callback_query.message.reply("📥 Please send the next playlist/album link.")
+
+@app.on_callback_query(filters.regex(r"done_(\d+)"))
+async def done_batch(client, callback_query):
+    user_id = int(callback_query.data.split("_")[1])
+    tracks = user_batch.get(user_id, [])
+
+    if not tracks:
+        await callback_query.answer("⚠️ No tracks found!", show_alert=True)
+        return
+
+    file_name = f"user_{user_id}_tracks.txt"
+    with open(file_name, "w") as f:
+        for tid in tracks:
+            f.write(tid + "\n")
+
+    await callback_query.message.reply_document(
+        file_name,
+        caption=f"✅ Total Combined Tracks: {len(tracks)}"
+    )
+
+    os.remove(file_name)
+    user_batch.pop(user_id, None)
+    await callback_query.answer("✅ Done!", show_alert=True)
