@@ -600,8 +600,7 @@ async def handle_trackid_click(client, callback_query):
  
 
 
-# ✅ Batch RUN CMD: File se IDs read karke one-by-one call with CANCEL
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 
 # Dictionary to track cancellation flags per user
 run_cancel_flags = {}
@@ -622,7 +621,6 @@ async def run_tracksssf(client, message):
     sent_count = 0
     failed_tracks = []
 
-    # Unique key for this user to track cancel
     key = f"run_{user_id}"
     run_cancel_flags[key] = False
 
@@ -639,8 +637,8 @@ async def run_tracksssf(client, message):
     )
 
     for idx, track_id in enumerate(track_ids, 1):
-        # Check if cancel was pressed
-        if run_cancel_flags.get(key):
+        # Check cancel flag at start of every iteration
+        if run_cancel_flags.get(key, False):
             await status_msg.edit(
                 f"❌ Batch cancelled by user.\n"
                 f"🎵 Total: **{total}**\n"
@@ -738,7 +736,10 @@ async def run_tracksssf(client, message):
             logging.error(f"Unhandled error for {track_id}: {e}")
             failed_tracks.append(track_id)
 
-    if not run_cancel_flags.get(key):
+        # Extra small sleep to allow cancellation to process smoothly
+        await asyncio.sleep(0.1)
+
+    if not run_cancel_flags.get(key, False):
         await status_msg.edit(
             f"✅ **Batch Done!**\n"
             f"🎵 Total: **{total}**\n"
@@ -756,11 +757,10 @@ async def run_tracksssf(client, message):
     run_cancel_flags.pop(key, None)
     os.remove(file)
 
-# ✅ CANCEL Button handler
+
 @Client.on_callback_query(filters.regex(r"cancel_run:(\d+)"))
 async def cancel_run_batch(client, callback_query):
     user_id = int(callback_query.data.split(":")[1])
     key = f"run_{user_id}"
     run_cancel_flags[key] = True
     await callback_query.answer("✅ Batch cancelled!", show_alert=True)
-
