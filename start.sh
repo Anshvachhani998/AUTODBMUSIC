@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Folder Name
-DIR="SpotifyDL"
+DIR="AUTODBMUSIC"
 
 
 
