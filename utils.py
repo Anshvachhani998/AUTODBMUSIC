@@ -28,7 +28,7 @@ aria2c_semaphore = asyncio.Semaphore(1)  # max 1 parallel
 async def download_with_aria2c(url, output_dir, filename):
     async with aria2c_semaphore:
         # optional small delay before starting
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
 
         cmd = [
             "aria2c",
