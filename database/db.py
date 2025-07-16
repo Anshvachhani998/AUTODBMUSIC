@@ -26,7 +26,17 @@ class Database:
         if doc and "file_id" in doc:
             return doc["file_id"]
         return None
-        
+
+
+    async def get_all_db(self) -> int:
+        """Returns total number of dump entries in the database."""
+        count = await self.col.count_documents({})
+        return count
+
+    async def delete_all_dumps(self) -> int:
+        """Deletes all dump entries and returns how many were deleted."""
+        result = await self.col.delete_many({})
+        return result.deleted_count
 
 # create instance
 db = Database()
