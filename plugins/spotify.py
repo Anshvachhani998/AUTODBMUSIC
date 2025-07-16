@@ -602,6 +602,8 @@ async def handle_trackid_click(client, callback_query):
 
 
 
+
+
 # Dictionary to track cancellation flags per user
 run_cancel_flags = {}
 
@@ -620,7 +622,9 @@ async def run_tracksssf(client, message):
     total = len(track_ids)
     sent_count = 0
     failed_tracks = []
+    skipped_tracks = []
 
+    # Unique key for this user to track cancel
     key = f"run_{user_id}"
     run_cancel_flags[key] = False
 
@@ -637,16 +641,32 @@ async def run_tracksssf(client, message):
     )
 
     for idx, track_id in enumerate(track_ids, 1):
-        # Check cancel flag at start of every iteration
-        if run_cancel_flags.get(key, False):
+        # Check if cancel was pressed
+        if run_cancel_flags.get(key):
             await status_msg.edit(
                 f"❌ Batch cancelled by user.\n"
                 f"🎵 Total: **{total}**\n"
                 f"✅ Sent: **{sent_count}**\n"
+                f"⏭️ Skipped: **{len(skipped_tracks)}**\n"
                 f"❌ Failed: **{len(failed_tracks)}**",
                 reply_markup=None
             )
             break
+
+        # Check DB cache before processing
+        dump_file_id = await db.get_dump_file_id(track_id)
+        if dump_file_id:
+            # Already cached, skip sending file
+            skipped_tracks.append(track_id)
+            await status_msg.edit(
+                f"⏭️ Skipping {idx} of {total} - Already in DB (cached).\n"
+                f"✅ Sent: {sent_count}\n"
+                f"⏭️ Skipped: {len(skipped_tracks)}\n"
+                f"❌ Failed: {len(failed_tracks)}\n"
+                f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
+                reply_markup=cancel_keyboard
+            )
+            continue
 
         try:
             spotify_url = f"https://open.spotify.com/track/{track_id}"
@@ -654,6 +674,14 @@ async def run_tracksssf(client, message):
             if not track_info:
                 await client.send_message(user_id, f"⚠️ Failed to fetch info for `{track_id}`. Skipping...")
                 failed_tracks.append(track_id)
+                await status_msg.edit(
+                    f"⚠️ Failed to fetch info for some tracks.\n"
+                    f"✅ Sent: {sent_count}\n"
+                    f"⏭️ Skipped: {len(skipped_tracks)}\n"
+                    f"❌ Failed: {len(failed_tracks)}\n"
+                    f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
+                    reply_markup=cancel_keyboard
+                )
                 continue
 
             title, artist, thumb_url = track_info
@@ -661,7 +689,9 @@ async def run_tracksssf(client, message):
             await status_msg.edit(
                 f"⬇️ Downloading {idx} of {total}: **{title}**\n"
                 f"✅ Sent: {sent_count}\n"
-                f"⏳ Remaining: {total - sent_count}",
+                f"⏭️ Skipped: {len(skipped_tracks)}\n"
+                f"❌ Failed: {len(failed_tracks)}\n"
+                f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
                 reply_markup=cancel_keyboard
             )
 
@@ -713,10 +743,15 @@ async def run_tracksssf(client, message):
 
                 sent_count += 1
 
+                failed_preview = ", ".join(failed_tracks[-5:]) if failed_tracks else "None"
+                skipped_preview = ", ".join(skipped_tracks[-5:]) if skipped_tracks else "None"
+
                 await status_msg.edit(
                     f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
                     f"✅ Sent: {sent_count}\n"
-                    f"⏳ Remaining: {total - sent_count}",
+                    f"⏭️ Skipped: {len(skipped_tracks)} ({skipped_preview})\n"
+                    f"❌ Failed: {len(failed_tracks)} ({failed_preview})\n"
+                    f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
                     reply_markup=cancel_keyboard
                 )
                 await asyncio.sleep(1)
@@ -736,14 +771,12 @@ async def run_tracksssf(client, message):
             logging.error(f"Unhandled error for {track_id}: {e}")
             failed_tracks.append(track_id)
 
-        # Extra small sleep to allow cancellation to process smoothly
-        await asyncio.sleep(0.1)
-
-    if not run_cancel_flags.get(key, False):
+    if not run_cancel_flags.get(key):
         await status_msg.edit(
             f"✅ **Batch Done!**\n"
             f"🎵 Total: **{total}**\n"
             f"✅ Sent: **{sent_count}**\n"
+            f"⏭️ Skipped: **{len(skipped_tracks)}**\n"
             f"❌ Failed: **{len(failed_tracks)}**",
             reply_markup=None
         )
@@ -758,9 +791,11 @@ async def run_tracksssf(client, message):
     os.remove(file)
 
 
+# Cancel Button handler
 @Client.on_callback_query(filters.regex(r"cancel_run:(\d+)"))
 async def cancel_run_batch(client, callback_query):
     user_id = int(callback_query.data.split(":")[1])
     key = f"run_{user_id}"
     run_cancel_flags[key] = True
     await callback_query.answer("✅ Batch cancelled!", show_alert=True)
+
