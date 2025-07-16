@@ -6,8 +6,14 @@ import logging
 import os
 import re
 import urllib.parse
-
 import random
+from urllib.parse import quote
+import requests
+from plugins.api import SpotMate
+import random
+
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,46 +61,151 @@ async def download_with_aria2c(url, output_dir, filename):
             return False
 
 
-logger = logging.getLogger(__name__)
 
-async def get_song_download_url_by_spotify_url(spotify_url: str):
-    logger.info(f"url {spotify_url}")
-    api_urls = [
-        f"https://spotify.koyeb.app/spotify?url={spotify_url}",
-        f"https://spotify.koyeb.app/spotify2?url={spotify_url}"
-    ]
+def ms_to_minutes(ms):
+    total_seconds = ms // 1000
+    minutes = total_seconds // 60
+    seconds = total_seconds % 60
+    return f"{minutes}:{str(seconds).zfill(2)}"
 
-    random.shuffle(api_urls)
+def spotify_download_primary(url):
+    if not url:
+        raise ValueError("❌ Error: URL is missing!")
 
-    async with aiohttp.ClientSession() as session:
-        for api in api_urls:
-            for attempt in range(3):  # Try 3 times per API
-                try:
-                    async with session.get(api, timeout=10) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            if data.get("status") and "data" in data:
-                                song_data = data["data"]
-                                found_title = song_data.get("title")
-                                download_url = song_data.get("download")
+    headers = {
+        'Content-Type': 'application/json',
+        'Origin': 'https://spotiydownloader.com',
+        'Referer': 'https://spotiydownloader.com/id',
+        'User-Agent': 'Mozilla/5.0'
+    }
 
-                                if download_url:
-                                    return found_title, download_url
-                                else:
-                                    logger.warning(f"No download URL in response from {api}")
-                            else:
-                                logger.warning(f"Invalid response data from {api}: {data}")
-                        else:
-                            logger.error(f"API request failed with status {resp.status} from {api}")
-                except Exception as e:
-                    logger.error(f"Exception while requesting {api} (attempt {attempt+1}): {e}")
+    try:
+        meta_response = requests.post(
+            'https://spotiydownloader.com/api/metainfo',
+            json={'url': url},
+            headers=headers,
+            timeout=15
+        )
+        meta_response.raise_for_status()
+    except requests.RequestException as e:
+        raise ConnectionError(f"❌ Error fetching meta info: {e}")
 
-                # Optional small delay before retrying
-                await asyncio.sleep(3)
+    meta = meta_response.json()
+    if not meta.get('success') or not meta.get('id'):
+        raise ValueError("❌ Failed to get song info. Maybe wrong URL?")
 
-            logger.warning(f"Failed 3 attempts on {api}, moving to next API")
+    try:
+        dl_response = requests.post(
+            'https://spotiydownloader.com/api/download',
+            json={'id': meta['id']},
+            headers=headers,
+            timeout=15
+        )
+        dl_response.raise_for_status()
+    except requests.RequestException as e:
+        raise ConnectionError(f"❌ Error fetching download link: {e}")
 
+    result = dl_response.json()
+    if not result.get('success') or not result.get('link'):
+        raise ValueError("❌ Failed to get download link.")
+
+    return {
+        'artist': meta.get('artists') or meta.get('artist') or 'Unknown',
+        'title': meta.get('title') or 'Unknown',
+        'duration': ms_to_minutes(meta['duration_ms']) if meta.get('duration_ms') else 'Unknown',
+        'image': meta.get('cover'),
+        'download': quote(result['link'], safe=':/?&=')
+    }
+
+
+
+async def get_song_download_url_by_spotify_url(url, max_retries=3, retry_delay=3):
+    loop = asyncio.get_event_loop()
+
+    for attempt in range(1, max_retries + 1):
+        methods = ['primary', 'secondary']
+        random.shuffle(methods)
+
+        first = methods[0]
+        second = methods[1]
+
+        try:
+            if first == 'primary':
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, spotify_download_primary, url),
+                    timeout=10
+                )
+                if result and result.get('download'):
+                    song_title = f"{result['artist']} - {result['title']}"
+                    return song_title, result['download']
+            else:
+                song_title, song_url = await asyncio.wait_for(
+                    spotify_download_secondary(url),
+                    timeout=20
+                )
+                if song_url:
+                    return song_title, song_url
+
+        except Exception as e:
+            logger.info(f"Attempt {attempt}: {first} method failed with error: {e}")
+
+        try:
+            if second == 'primary':
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, spotify_download_primary, url),
+                    timeout=10
+                )
+                if result and result.get('download'):
+                    song_title = f"{result['title']}"
+                    return song_title, result['download']
+            else:
+                song_title, song_url = await asyncio.wait_for(
+                    spotify_download_secondary(url),
+                    timeout=20
+                )
+                if song_url:
+                    return song_title, song_url
+
+        except Exception as e:
+            logger.info(f"Attempt {attempt}: {second} method failed with error: {e}")
+
+        logger.info(f"Attempt {attempt} failed, retrying after {retry_delay} seconds...")
+        await asyncio.sleep(retry_delay)
+
+    # 3 attempts ke baad bhi nahi mila toh None return karo
     return None, None
+
+
+
+async def spotify_download_secondary(url: str):
+    loop = asyncio.get_event_loop()
+
+    def spotmate_flow():
+        sm = SpotMate()
+        info = sm.info(url)
+
+        artists = []
+        if info.get('artists'):
+            for a in info['artists']:
+                artists.append(a.get('name'))
+        artist_name = ", ".join(artists) if artists else "Unknown"
+
+        title = info.get('name') or info.get('title') or "Unknown"
+        
+        result = sm.convert(url)
+        if not result or 'url' not in result or not result['url']:
+            raise Exception("SpotMate convert failed: No URL found.")
+
+        download_url = result['url']
+        sm.clear()
+
+        return title, download_url
+
+    return await loop.run_in_executor(None, spotmate_flow)
+
+
+
+
 
 async def download_thumbnail(thumb_url: str, output_path: str) -> bool:
     if not thumb_url:
