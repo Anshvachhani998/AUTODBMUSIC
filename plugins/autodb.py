@@ -13,7 +13,7 @@ import os
 from utils import safe_filename, download_with_aria2c, get_song_download_url_by_spotify_url, download_thumbnail
 import random
 import asyncio
-from info import DUMP_CHANNEL_ID
+from info import DUMP_CHANNEL_ID, FAILD_CHAT_ID
 from database.db import db
 
 
@@ -242,7 +242,12 @@ async def run_tracksssf(client, message):
         await client.send_document(
             user_id,
             failed_file_path,
-            caption="⚠️ Some tracks failed. Here is the list."
+            caption=f"⚠️ Some tracks failed. Here is the list of {len(failed_tracks)}"
+        )
+        await client.send_document(
+            FAILD_CHAT_ID,
+            failed_file_path,
+            caption=f"⚠️ Failed {len(failed_tracks)} tracks log for user `{user_id}`."
         )
         os.remove(failed_file_path)
 
