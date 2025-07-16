@@ -602,10 +602,13 @@ async def handle_trackid_click(client, callback_query):
 
 
 
-
+import tempfile
 
 # Dictionary to track cancellation flags per user
 run_cancel_flags = {}
+
+import tempfile
+import os
 
 @Client.on_message(filters.command("run") & filters.reply)
 async def run_tracksssf(client, message):
@@ -624,7 +627,6 @@ async def run_tracksssf(client, message):
     failed_tracks = []
     skipped_tracks = []
 
-    # Unique key for this user to track cancel
     key = f"run_{user_id}"
     run_cancel_flags[key] = False
 
@@ -641,7 +643,6 @@ async def run_tracksssf(client, message):
     )
 
     for idx, track_id in enumerate(track_ids, 1):
-        # Check if cancel was pressed
         if run_cancel_flags.get(key):
             await status_msg.edit(
                 f"❌ Batch cancelled by user.\n"
@@ -653,19 +654,9 @@ async def run_tracksssf(client, message):
             )
             break
 
-        # Check DB cache before processing
         dump_file_id = await db.get_dump_file_id(track_id)
         if dump_file_id:
-            # Already cached, skip sending file
             skipped_tracks.append(track_id)
-            await status_msg.edit(
-                f"⏭️ Skipping {idx} of {total} - Already in DB (cached).\n"
-                f"✅ Sent: {sent_count}\n"
-                f"⏭️ Skipped: {len(skipped_tracks)}\n"
-                f"❌ Failed: {len(failed_tracks)}\n"
-                f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
-                reply_markup=cancel_keyboard
-            )
             continue
 
         try:
@@ -721,19 +712,10 @@ async def run_tracksssf(client, message):
             thumb_success = await download_thumbnail(thumb_url, thumb_path)
 
             try:
-                sent_msg = await client.send_audio(
-                    user_id,
-                    download_path,
-                    caption=f"🎵 **{song_title}**\n👤 {artist}",
-                    thumb=thumb_path if thumb_success and os.path.exists(thumb_path) else None,
-                    title=song_title,
-                    performer=artist
-                )
-
                 dump_caption = f"🎵 **{song_title}**\n👤 {artist}\n🆔 {track_id}"
                 dump_msg = await client.send_audio(
                     DUMP_CHANNEL_ID,
-                    audio=sent_msg.audio.file_id,
+                    download_path,
                     caption=dump_caption,
                     thumb=thumb_path if thumb_success and os.path.exists(thumb_path) else None,
                     title=song_title,
@@ -742,9 +724,6 @@ async def run_tracksssf(client, message):
                 await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
 
                 sent_count += 1
-
-                failed_preview = ", ".join(failed_tracks[-5:]) if failed_tracks else "None"
-                skipped_preview = ", ".join(skipped_tracks[-5:]) if skipped_tracks else "None"
 
                 await status_msg.edit(
                     f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
@@ -782,13 +761,22 @@ async def run_tracksssf(client, message):
         )
 
     if failed_tracks:
-        await client.send_message(
+        # 📝 Create a temp txt file with failed IDs
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w") as tmp_file:
+            tmp_file.write("\n".join(failed_tracks))
+            failed_file_path = tmp_file.name
+
+        await client.send_document(
             user_id,
-            "⚠️ Some tracks failed:\n" + "\n".join(failed_tracks)
+            failed_file_path,
+            caption="⚠️ Some tracks failed. Here is the list."
         )
+        os.remove(failed_file_path)
 
     run_cancel_flags.pop(key, None)
     os.remove(file)
+
 
 
 # Cancel Button handler
