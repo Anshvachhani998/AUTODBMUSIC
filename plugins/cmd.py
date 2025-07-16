@@ -9,7 +9,7 @@ import subprocess
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from info import LOG_CHANNEL, ADMINS, BOT_TOKEN
-
+from database.db import db
 
 @Client.on_message(filters.command("start"))
 async def start(client, message):
@@ -58,3 +58,40 @@ async def git_pull(client, message):
         os._exit(0)
 
     await message.reply_text(f"📦 Git Pull Output:\n```\n{output}\n```")
+
+
+
+
+
+@Client.on_message(filters.command("stats"))
+async def dump_stats(client, message):
+    count = await db.get_all_db()
+    await message.reply(f"📊 Total dump tracks in DB: **{count}**")
+
+@Client.on_message(filters.command("delete"))
+async def dump_delete(client, message):
+    # Confirmation buttons
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Yes", callback_data="confirm_delete_dumps"),
+                InlineKeyboardButton("❌ No", callback_data="cancel_delete_dumps"),
+            ]
+        ]
+    )
+    await message.reply(
+        "⚠️ Are you sure you want to delete ALL dump entries?",
+        reply_markup=keyboard
+    )
+
+@Client.on_callback_query(filters.regex(r"confirm_delete_dumps"))
+async def confirm_delete(client, callback_query):
+    deleted = await db.delete_all_dumps()
+    await callback_query.message.edit_text(f"🗑️ Deleted **{deleted}** dump entries from the database.")
+    await callback_query.answer()
+
+@Client.on_callback_query(filters.regex(r"cancel_delete_dumps"))
+async def cancel_delete(client, callback_query):
+    await callback_query.message.edit_text("❌ Deletion cancelled.")
+    await callback_query.answer()
+
