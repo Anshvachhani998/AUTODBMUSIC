@@ -148,6 +148,7 @@ async def handle_links(client, message):
         return
 
     link = message.text.strip()
+    status_msg = await message.reply("⏳ Processing your link, please wait...")
     fetched_ids = []
     total_tracks_count = 0
 
@@ -203,6 +204,7 @@ async def handle_links(client, message):
                 new_ids.append(tid)
 
     user_batch[user_id].extend(new_ids)
+    await status_msg.delete()
 
     await message.reply(
         f"✅ Total fetched: {total_tracks_count}\n"
