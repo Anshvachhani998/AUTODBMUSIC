@@ -95,3 +95,13 @@ async def cancel_delete(client, callback_query):
     await callback_query.message.edit_text("❌ Deletion cancelled.")
     await callback_query.answer()
 
+
+
+@Client.on_message(filters.command("ip") & filters.private)
+async def send_ip(client, message):
+    try:
+        ip = requests.get("https://ipinfo.io/ip").text.strip()
+        await message.reply(f"🌐 My public IP is:\n`{ip}`")
+    except Exception as e:
+        await message.reply(f"❌ Failed to get IP:\n{e}")
+        
