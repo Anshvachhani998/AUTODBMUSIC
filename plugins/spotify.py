@@ -599,3 +599,171 @@ async def handle_trackid_click(client, callback_query):
                 os.remove(download_path)
             if os.path.exists(thumb_path):
                 os.remove(thumb_path)
+
+
+
+
+# ✅ Batch RUN CMD: File se IDs read karke one-by-one call with CANCEL
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+# Dictionary to track cancellation flags per user
+run_cancel_flags = {}
+
+@Client.on_message(filters.command("run") & filters.reply)
+async def run_tracks(client, message):
+    if not message.reply_to_message.document:
+        await message.reply("⚠️ Please reply to a `.txt` file containing track IDs.")
+        return
+
+    file = await client.download_media(message.reply_to_message.document)
+    user_id = message.from_user.id
+
+    with open(file, "r") as f:
+        track_ids = [line.strip() for line in f if line.strip()]
+
+    total = len(track_ids)
+    sent_count = 0
+    failed_tracks = []
+
+    # Unique key for this user to track cancel
+    key = f"run_{user_id}"
+    run_cancel_flags[key] = False
+
+    cancel_keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("❌ Cancel Batch", callback_data=f"cancel_run:{user_id}")]]
+    )
+
+    status_msg = await message.reply(
+        f"📂 **Batch Download Started!**\n"
+        f"🎵 Total: **{total}**\n"
+        f"✅ Sent: **0**\n"
+        f"⏳ Remaining: **{total}**",
+        reply_markup=cancel_keyboard
+    )
+
+    for idx, track_id in enumerate(track_ids, 1):
+        # Check if cancel was pressed
+        if run_cancel_flags.get(key):
+            await status_msg.edit(
+                f"❌ Batch cancelled by user.\n"
+                f"🎵 Total: **{total}**\n"
+                f"✅ Sent: **{sent_count}**\n"
+                f"❌ Failed: **{len(failed_tracks)}**",
+                reply_markup=None
+            )
+            break
+
+        try:
+            spotify_url = f"https://open.spotify.com/track/{track_id}"
+            track_info = extract_track_info(spotify_url)
+            if not track_info:
+                await client.send_message(user_id, f"⚠️ Failed to fetch info for `{track_id}`. Skipping...")
+                failed_tracks.append(track_id)
+                continue
+
+            title, artist, thumb_url = track_info
+
+            await status_msg.edit(
+                f"⬇️ Downloading {idx} of {total}: **{title}**\n"
+                f"✅ Sent: {sent_count}\n"
+                f"⏳ Remaining: {total - sent_count}",
+                reply_markup=cancel_keyboard
+            )
+
+            try:
+                song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
+            except Exception:
+                await client.send_message(user_id, f"⚠️ Error fetching link for `{title}`. Skipping...")
+                failed_tracks.append(track_id)
+                continue
+
+            if not song_url:
+                await client.send_message(user_id, f"❌ No download link for `{title}`. Skipping...")
+                failed_tracks.append(track_id)
+                continue
+
+            base_name = safe_filename(song_title)
+            safe_name = f"{base_name}_{random.randint(100, 999)}.mp3"
+            download_path = os.path.join(output_dir, safe_name)
+
+            success = await download_with_aria2c(song_url, output_dir, safe_name)
+            if not success or not os.path.exists(download_path):
+                await client.send_message(user_id, f"❌ Failed to download **{song_title}**. Skipping...")
+                failed_tracks.append(track_id)
+                continue
+
+            thumb_path = os.path.join(output_dir, safe_filename(song_title) + ".jpg")
+            thumb_success = await download_thumbnail(thumb_url, thumb_path)
+
+            try:
+                sent_msg = await client.send_audio(
+                    user_id,
+                    download_path,
+                    caption=f"🎵 **{song_title}**\n👤 {artist}",
+                    thumb=thumb_path if thumb_success and os.path.exists(thumb_path) else None,
+                    title=song_title,
+                    performer=artist
+                )
+
+                dump_caption = f"🎵 **{song_title}**\n👤 {artist}\n🆔 {track_id}"
+                dump_msg = await client.send_audio(
+                    DUMP_CHANNEL_ID,
+                    audio=sent_msg.audio.file_id,
+                    caption=dump_caption,
+                    thumb=thumb_path if thumb_success and os.path.exists(thumb_path) else None,
+                    title=song_title,
+                    performer=artist
+                )
+                await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
+
+                sent_count += 1
+
+                await status_msg.edit(
+                    f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
+                    f"✅ Sent: {sent_count}\n"
+                    f"⏳ Remaining: {total - sent_count}",
+                    reply_markup=cancel_keyboard
+                )
+                await asyncio.sleep(1)
+
+            except Exception as e:
+                logging.error(f"Send failed for {song_title}: {e}")
+                await client.send_message(user_id, f"⚠️ Failed to send **{song_title}**. Skipping...")
+                failed_tracks.append(track_id)
+
+            finally:
+                if os.path.exists(download_path):
+                    os.remove(download_path)
+                if os.path.exists(thumb_path):
+                    os.remove(thumb_path)
+
+        except Exception as e:
+            logging.error(f"Unhandled error for {track_id}: {e}")
+            failed_tracks.append(track_id)
+
+    if not run_cancel_flags.get(key):
+        await status_msg.edit(
+            f"✅ **Batch Done!**\n"
+            f"🎵 Total: **{total}**\n"
+            f"✅ Sent: **{sent_count}**\n"
+            f"❌ Failed: **{len(failed_tracks)}**",
+            reply_markup=None
+        )
+
+    if failed_tracks:
+        await client.send_message(
+            user_id,
+            "⚠️ Some tracks failed:\n" + "\n".join(failed_tracks)
+        )
+
+    run_cancel_flags.pop(key, None)
+    os.remove(file)
+
+# ✅ CANCEL Button handler
+@Client.on_callback_query(filters.regex(r"cancel_run:(\d+)"))
+async def cancel_run_batch(client, callback_query):
+    user_id = int(callback_query.data.split(":")[1])
+    key = f"run_{user_id}"
+    run_cancel_flags[key] = True
+    await callback_query.answer("✅ Batch cancelled!", show_alert=True)
+
