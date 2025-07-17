@@ -247,3 +247,76 @@ async def done_batch(client, callback_query):
     os.remove(file_name)
     user_batch.pop(user_id, None)
     await callback_query.answer("✅ Done!", show_alert=True)
+
+
+@Client.on_message(filters.command("ar") & filters.private & filters.reply)
+async def artist_bulk_tracks(client, message):
+    if not message.reply_to_message.document:
+        await message.reply("❗ Please reply to a `.txt` file containing artist links.")
+        return
+
+    status_msg = await message.reply("📥 Downloading file...")
+
+    file_path = await message.reply_to_message.download()
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    all_tracks = []
+
+    for line in lines:
+        match = re.search(r"spotify\.com/artist/([a-zA-Z0-9]+)", line)
+        if not match:
+            continue
+
+        artist_id = match.group(1)
+
+        try:
+            # Albums
+            album_ids = set()
+            results_albums = sp.artist_albums(artist_id, album_type='album', limit=50)
+            album_ids.update([album['id'] for album in results_albums['items']])
+            while results_albums['next']:
+                results_albums = sp.next(results_albums)
+                album_ids.update([album['id'] for album in results_albums['items']])
+
+            # Singles
+            results_singles = sp.artist_albums(artist_id, album_type='single', limit=50)
+            album_ids.update([single['id'] for single in results_singles['items']])
+            while results_singles['next']:
+                results_singles = sp.next(results_singles)
+                album_ids.update([single['id'] for single in results_singles['items']])
+
+            # Collect tracks
+            for idx, release_id in enumerate(album_ids, 1):
+                try:
+                    tracks = sp.album_tracks(release_id)
+                    all_tracks.extend([track['id'] for track in tracks['items']])
+                    await asyncio.sleep(0.2)
+
+                    if idx % 50 == 0:
+                        await asyncio.sleep(3)
+
+                except SpotifyException as e:
+                    if e.http_status == 429:
+                        retry_after = int(e.headers.get("Retry-After", 5))
+                        await asyncio.sleep(retry_after)
+                        continue
+                    else:
+                        raise
+
+        except Exception as e:
+            await client.send_message(message.chat.id, f"⚠️ Error fetching artist {artist_id}: {e}")
+            continue
+
+    # After processing all artists, send ONE big file
+    part_file = f"all_artists_tracks.txt"
+    with open(part_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(all_tracks))
+
+    await client.send_document(
+        chat_id=message.chat.id,
+        document=part_file,
+        caption=f"✅ All tracks collected. Total tracks: {len(all_tracks)}"
+    )
+
+    await status_msg.edit("✅ Done! All artist track IDs fetched.")
