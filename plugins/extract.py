@@ -249,7 +249,7 @@ async def done_batch(client, callback_query):
     await callback_query.answer("✅ Done!", show_alert=True)
 
 
-@Client.on_message(filters.command("ar") & filters.private & filters.reply)
+@Client.on_message(filters.command("artist") & filters.private & filters.reply)
 async def artist_bulk_tracks(client, message):
     if not message.reply_to_message.document:
         await message.reply("❗ Please reply to a `.txt` file containing artist links.")
