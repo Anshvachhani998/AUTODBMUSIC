@@ -98,7 +98,6 @@ async def run_tracksssf(client, message):
         [[InlineKeyboardButton("❌ Cancel Batch", callback_data=f"cancel_run:{user_id}")]]
     )
 
-    # 🕒 Note start time
     start_time = time.time()
 
     status_msg = await message.reply(
@@ -133,16 +132,7 @@ async def run_tracksssf(client, message):
             spotify_url = f"https://open.spotify.com/track/{track_id}"
             track_info = extract_track_info(spotify_url)
             if not track_info:
-                await client.send_message(user_id, f"⚠️ Failed to fetch info for `{track_id}`. Skipping...")
                 failed_tracks.append(track_id)
-                await status_msg.edit(
-                    f"⚠️ Failed to fetch info for some tracks.\n"
-                    f"✅ Sent: {sent_count}\n"
-                    f"⏭️ Skipped: {len(skipped_tracks)}\n"
-                    f"❌ Failed: {len(failed_tracks)}\n"
-                    f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
-                    reply_markup=cancel_keyboard
-                )
                 continue
 
             title, artist, thumb_url = track_info
@@ -156,15 +146,8 @@ async def run_tracksssf(client, message):
                 reply_markup=cancel_keyboard
             )
 
-            try:
-                song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
-            except Exception:
-                await client.send_message(user_id, f"⚠️ Error fetching link for `{title}`. Skipping...")
-                failed_tracks.append(track_id)
-                continue
-
+            song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
             if not song_url:
-                await client.send_message(user_id, f"❌ No download link for `{title}`. Skipping...")
                 failed_tracks.append(track_id)
                 continue
 
@@ -174,14 +157,87 @@ async def run_tracksssf(client, message):
 
             success = await download_with_aria2c(song_url, output_dir, safe_name)
             if not success or not os.path.exists(download_path):
-                await client.send_message(user_id, f"❌ Failed to download **{song_title}**. Skipping...")
                 failed_tracks.append(track_id)
                 continue
 
             thumb_path = os.path.join(output_dir, safe_filename(song_title) + ".jpg")
             thumb_success = await download_thumbnail(thumb_url, thumb_path)
 
+            dump_caption = f"🎵 **{song_title}**\n👤 {artist}\n🆔 {track_id}"
+            dump_msg = await client.send_audio(
+                DUMP_CHANNEL_ID,
+                download_path,
+                caption=dump_caption,
+                thumb=thumb_path if thumb_success and os.path.exists(thumb_path) else None,
+                title=song_title,
+                performer=artist
+            )
+
+            await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
+            sent_count += 1
+
+            await status_msg.edit(
+                f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
+                f"✅ Sent: {sent_count}\n"
+                f"⏭️ Skipped: {len(skipped_tracks)}\n"
+                f"❌ Failed: {len(failed_tracks)}\n"
+                f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
+                reply_markup=cancel_keyboard
+            )
+            await asyncio.sleep(1)
+
+            if os.path.exists(download_path):
+                os.remove(download_path)
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+
+        except Exception as e:
+            logging.error(f"Error with {track_id}: {e}")
+            failed_tracks.append(track_id)
+
+    # ✅ Retry logic for failed
+    if failed_tracks:
+        await asyncio.sleep(10)
+        await client.send_message(user_id, f"🔁 Retrying {len(failed_tracks)} failed tracks...")
+
+        retry_success = []
+        retry_failed = []
+
+        for idx, track_id in enumerate(failed_tracks, 1):
+            if run_cancel_flags.get(key):
+                await client.send_message(user_id, "❌ Retry cancelled by user.")
+                break
+
+            dump_file_id = await db.get_dump_file_id(track_id)
+            if dump_file_id:
+                retry_success.append(track_id)
+                continue
+
             try:
+                spotify_url = f"https://open.spotify.com/track/{track_id}"
+                track_info = extract_track_info(spotify_url)
+                if not track_info:
+                    retry_failed.append(track_id)
+                    continue
+
+                title, artist, thumb_url = track_info
+                song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
+                if not song_url:
+                    retry_failed.append(track_id)
+                    continue
+
+                base_name = safe_filename(song_title)
+                safe_name = f"{base_name}_{random.randint(100, 999)}.mp3"
+                download_path = os.path.join(output_dir, safe_name)
+
+                success = await download_with_aria2c(song_url, output_dir, safe_name)
+                if not success or not os.path.exists(download_path):
+                    retry_failed.append(track_id)
+                    continue
+
+                thumb_path = os.path.join(output_dir, safe_filename(song_title) + ".jpg")
+                thumb_success = await download_thumbnail(thumb_url, thumb_path)
+
                 dump_caption = f"🎵 **{song_title}**\n👤 {artist}\n🆔 {track_id}"
                 dump_msg = await client.send_audio(
                     DUMP_CHANNEL_ID,
@@ -191,35 +247,27 @@ async def run_tracksssf(client, message):
                     title=song_title,
                     performer=artist
                 )
-                await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
 
+                await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
+                retry_success.append(track_id)
                 sent_count += 1
 
-                await status_msg.edit(
-                    f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
-                    f"✅ Sent: {sent_count}\n"
-                    f"⏭️ Skipped: {len(skipped_tracks)}\n"
-                    f"❌ Failed: {len(failed_tracks)}\n"
-                    f"⏳ Remaining: {total - sent_count - len(skipped_tracks) - len(failed_tracks)}",
-                    reply_markup=cancel_keyboard
-                )
-                await asyncio.sleep(1)
-
-            except Exception as e:
-                logging.error(f"Send failed for {song_title}: {e}")
-                await client.send_message(user_id, f"⚠️ Failed to send **{song_title}**. Skipping...")
-                failed_tracks.append(track_id)
-
-            finally:
                 if os.path.exists(download_path):
                     os.remove(download_path)
                 if os.path.exists(thumb_path):
                     os.remove(thumb_path)
 
-        except Exception as e:
-            logging.error(f"Unhandled error for {track_id}: {e}")
-            failed_tracks.append(track_id)
+            except Exception as e:
+                logging.error(f"Retry error for {track_id}: {e}")
+                retry_failed.append(track_id)
 
+        await client.send_message(
+            user_id,
+            f"🔁 Retry complete.\n✅ Recovered: {len(retry_success)}\n❌ Still Failed: {len(retry_failed)}"
+        )
+        failed_tracks = retry_failed
+
+    # Final summary
     if not run_cancel_flags.get(key):
         end_time = time.time()
         formatted_time = format_seconds(int(end_time - start_time))
@@ -232,6 +280,10 @@ async def run_tracksssf(client, message):
             f"⏳ Time Taken: **{formatted_time}**",
             reply_markup=None
         )
+        await client.send_message(
+            user_id,
+            f"**🔁 Task complete**"
+        )
 
     if failed_tracks:
         import tempfile
@@ -242,12 +294,12 @@ async def run_tracksssf(client, message):
         await client.send_document(
             user_id,
             failed_file_path,
-            caption=f"⚠️ Some tracks failed. Here is the list of {len(failed_tracks)}"
+            caption=f"⚠️ Final failed tracks: {len(failed_tracks)}"
         )
         await client.send_document(
             FAILD_CHAT_ID,
             failed_file_path,
-            caption=f"⚠️ Failed {len(failed_tracks)} tracks log for user `{user_id}`."
+            caption=f"⚠️ Final failed log after retry for user `{user_id}`."
         )
         os.remove(failed_file_path)
 
