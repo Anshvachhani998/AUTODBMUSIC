@@ -358,19 +358,20 @@ async def done_batch(client, callback_query):
 
 import os
 import re
-import json
 import time
+import json
 import asyncio
 import logging
 from datetime import datetime
 from pyrogram import Client, filters
 
-
+# Constants - apne hisaab se change kar sakte ho
 PROGRESS_FILE = "artist_progress.json"
-MAX_REQUESTS_PER_MIN = 60
-MIN_DELAY_BETWEEN_CALLS = 1.3
+MAX_REQUESTS_PER_MIN = 55          # Spotify API safe limit approx
+MIN_DELAY_BETWEEN_CALLS = 0.8      # 0.8 seconds gap between calls (about 1.25 req/sec)
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("plugins.extract")
+logging.basicConfig(level=logging.INFO)
 
 @Client.on_message(filters.command("sa") & filters.private & filters.reply)
 async def artist_bulk_tracks(client, message):
@@ -391,9 +392,9 @@ async def artist_bulk_tracks(client, message):
     request_counter = 0
     start_index = 0
     last_reset = time.time()
-    last_call_time = 0  # To ensure MIN_DELAY_BETWEEN_CALLS between calls
+    last_call_time = 0  # For delay control
 
-    # 🧠 Load progress if exists & valid
+    # Progress loading
     if manual_skip is not None:
         start_index = manual_skip
         artist_counter = start_index
@@ -423,7 +424,7 @@ async def artist_bulk_tracks(client, message):
     async def safe_spotify_call_with_rate_limit(func, *args, **kwargs):
         nonlocal request_counter, last_reset, last_call_time
 
-        # Rate limit per minute logic
+        # Check per-minute limit
         if request_counter >= MAX_REQUESTS_PER_MIN:
             elapsed = time.time() - last_reset
             if elapsed < 60:
@@ -433,25 +434,23 @@ async def artist_bulk_tracks(client, message):
             request_counter = 0
             last_reset = time.time()
 
-        # Ensure minimum delay between calls
+        # Ensure min delay between calls
         now = time.time()
         time_since_last_call = now - last_call_time
         if time_since_last_call < MIN_DELAY_BETWEEN_CALLS:
             await asyncio.sleep(MIN_DELAY_BETWEEN_CALLS - time_since_last_call)
 
-        # Call the Spotify API function
         try:
-            result = await func(*args, **kwargs)
+            # Wrap sync Spotify calls to async if needed
+            result = await asyncio.to_thread(func, *args, **kwargs)
             request_counter += 1
             last_call_time = time.time()
             return result
         except Exception as e:
-            # Check for rate limit error 429
             if hasattr(e, 'http_status') and e.http_status == 429:
                 retry_after = int(e.headers.get("Retry-After", 5))
                 logger.warning(f"⛔ Spotify API Rate limit hit, retry after {retry_after}s.")
                 await asyncio.sleep(retry_after + 1)
-                # After sleep, try again recursively once
                 return await safe_spotify_call_with_rate_limit(func, *args, **kwargs)
             else:
                 raise
@@ -493,7 +492,7 @@ async def artist_bulk_tracks(client, message):
                         continue
                     all_tracks.append(track_id)
 
-            # Optional small delay between artists
+            # Small delay between artists
             await asyncio.sleep(2)
 
         except Exception as e:
@@ -501,7 +500,7 @@ async def artist_bulk_tracks(client, message):
             await client.send_message(message.chat.id, f"⚠️ Error fetching `{artist_id}`: {e}")
             continue
 
-        # If enough tracks collected, save/send batch and clear list
+        # Save/send batches
         if len(all_tracks) >= 5000:
             batch = all_tracks[:5000]
             all_tracks = all_tracks[5000:]
@@ -516,7 +515,7 @@ async def artist_bulk_tracks(client, message):
             )
             await asyncio.sleep(3)
 
-        # 💾 Save progress
+        # Save progress json
         with open(PROGRESS_FILE, "w", encoding="utf-8") as pf:
             json.dump({
                 "artist_index": idx + 1,
@@ -524,7 +523,7 @@ async def artist_bulk_tracks(client, message):
                 "all_tracks": all_tracks
             }, pf)
 
-    # Send any remaining tracks as final batch
+    # Send final batch if left
     if all_tracks:
         part_file = f"tracks_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         with open(part_file, "w", encoding="utf-8") as f:
