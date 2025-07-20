@@ -30,6 +30,40 @@ def extract_artist_id(url):
         return match.group(1)
     return None
 
+import asyncio
+import logging
+from spotipy.exceptions import SpotifyException
+
+async def safe_spotify_call_with_rate_limit(func, *args, **kwargs):
+    """
+    Safely call a Spotify API function (async) with automatic handling of rate limits.
+    Retries after waiting if HTTP 429 (rate limit) is encountered.
+
+    Args:
+        func: async Spotify API method to call
+        *args, **kwargs: parameters for the Spotify API call
+
+    Returns:
+        Result of the Spotify API call.
+    """
+    while True:
+        try:
+            result = await func(*args, **kwargs)
+            return result
+        except SpotifyException as e:
+            if e.http_status == 429:
+                retry_after = int(e.headers.get("Retry-After", 5))
+                logging.warning(f"Rate limited by Spotify, retrying after {retry_after} seconds...")
+                await asyncio.sleep(retry_after)
+            else:
+                logging.error(f"Spotify API error: {e}")
+                raise
+        except Exception as e:
+            logging.error(f"Unexpected error calling Spotify API: {e}")
+            raise
+
+
+
 @app.on_message(filters.command("artist") & filters.private)
 async def artist_songs(client, message):
     if len(message.command) < 2:
@@ -320,4 +354,191 @@ async def done_batch(client, callback_query):
     user_batch.pop(user_id, None)
     await callback_query.answer("✅ Done!", show_alert=True)
 
+
+
+import os
+import re
+import json
+import time
+import asyncio
+import logging
+from datetime import datetime
+from pyrogram import Client, filters
+
+
+PROGRESS_FILE = "artist_progress.json"
+MAX_REQUESTS_PER_MIN = 60
+MIN_DELAY_BETWEEN_CALLS = 1.3
+
+logger = logging.getLogger(__name__)
+
+@Client.on_message(filters.command("sa") & filters.private & filters.reply)
+async def artist_bulk_tracks(client, message):
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply("❗ Please reply to a `.txt` file containing artist links.")
+        return
+
+    args = message.text.strip().split()
+    manual_skip = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+
+    status_msg = await message.reply("📥 Downloading file...")
+
+    file_path = await message.reply_to_message.download()
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    all_tracks = []
+    request_counter = 0
+    start_index = 0
+    last_reset = time.time()
+    last_call_time = 0  # To ensure MIN_DELAY_BETWEEN_CALLS between calls
+
+    # 🧠 Load progress if exists & valid
+    if manual_skip is not None:
+        start_index = manual_skip
+        artist_counter = start_index
+        await message.reply(f"⏩ Starting from artist #{start_index+1} (manual skip).")
+    elif os.path.exists(PROGRESS_FILE):
+        try:
+            with open(PROGRESS_FILE, "r", encoding="utf-8") as pf:
+                content = pf.read().strip()
+                if not content:
+                    raise ValueError("Progress file is empty.")
+                progress = json.loads(content)
+                start_index = progress.get("artist_index", 0)
+                request_counter = progress.get("request_counter", 0)
+                all_tracks = progress.get("all_tracks", [])
+            artist_counter = start_index
+            await message.reply(f"🔄 Resuming from artist #{start_index+1} with {request_counter} requests used.")
+        except Exception as e:
+            await message.reply(f"⚠️ Progress file corrupted or empty. Starting fresh.\n\nError: {e}")
+            start_index = 0
+            request_counter = 0
+            all_tracks = []
+            artist_counter = 0
+    else:
+        await message.reply("🚀 Starting fresh...")
+        artist_counter = 0
+
+    async def safe_spotify_call_with_rate_limit(func, *args, **kwargs):
+        nonlocal request_counter, last_reset, last_call_time
+
+        # Rate limit per minute logic
+        if request_counter >= MAX_REQUESTS_PER_MIN:
+            elapsed = time.time() - last_reset
+            if elapsed < 60:
+                wait_time = 60 - elapsed
+                logger.info(f"⏳ Rate limit reached: waiting {wait_time:.2f} seconds.")
+                await asyncio.sleep(wait_time)
+            request_counter = 0
+            last_reset = time.time()
+
+        # Ensure minimum delay between calls
+        now = time.time()
+        time_since_last_call = now - last_call_time
+        if time_since_last_call < MIN_DELAY_BETWEEN_CALLS:
+            await asyncio.sleep(MIN_DELAY_BETWEEN_CALLS - time_since_last_call)
+
+        # Call the Spotify API function
+        try:
+            result = await func(*args, **kwargs)
+            request_counter += 1
+            last_call_time = time.time()
+            return result
+        except Exception as e:
+            # Check for rate limit error 429
+            if hasattr(e, 'http_status') and e.http_status == 429:
+                retry_after = int(e.headers.get("Retry-After", 5))
+                logger.warning(f"⛔ Spotify API Rate limit hit, retry after {retry_after}s.")
+                await asyncio.sleep(retry_after + 1)
+                # After sleep, try again recursively once
+                return await safe_spotify_call_with_rate_limit(func, *args, **kwargs)
+            else:
+                raise
+
+    for idx in range(start_index, len(lines)):
+        line = lines[idx].strip()
+        match = re.search(r"spotify\.com/artist/([a-zA-Z0-9]+)", line)
+        if not match:
+            continue
+
+        artist_id = match.group(1)
+        artist_counter += 1
+
+        try:
+            logger.info(f"🎤 Fetching albums for Artist {artist_counter}: {artist_id}")
+            album_ids = set()
+
+            results = await safe_spotify_call_with_rate_limit(
+                sp.artist_albums,
+                artist_id,
+                album_type='album,single,appears_on,compilation',
+                limit=50
+            )
+            album_ids.update([album['id'] for album in results['items']])
+
+            while results['next']:
+                results = await safe_spotify_call_with_rate_limit(sp.next, results)
+                album_ids.update([album['id'] for album in results['items']])
+
+            logger.info(f"📀 Total releases for artist {artist_id}: {len(album_ids)}")
+
+            for release_id in album_ids:
+                tracks = await safe_spotify_call_with_rate_limit(sp.album_tracks, release_id)
+
+                for track in tracks['items']:
+                    track_id = track['id']
+                    exists = await db.get_dump_file_id(track_id)
+                    if exists:
+                        continue
+                    all_tracks.append(track_id)
+
+            # Optional small delay between artists
+            await asyncio.sleep(2)
+
+        except Exception as e:
+            logger.warning(f"⚠️ Error with artist {artist_id}: {e}")
+            await client.send_message(message.chat.id, f"⚠️ Error fetching `{artist_id}`: {e}")
+            continue
+
+        # If enough tracks collected, save/send batch and clear list
+        if len(all_tracks) >= 5000:
+            batch = all_tracks[:5000]
+            all_tracks = all_tracks[5000:]
+            part_file = f"tracks_part_{artist_counter}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(part_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(batch))
+
+            await client.send_document(
+                chat_id=message.chat.id,
+                document=part_file,
+                caption=f"✅ Part from Artist #{artist_counter} (5000 tracks)"
+            )
+            await asyncio.sleep(3)
+
+        # 💾 Save progress
+        with open(PROGRESS_FILE, "w", encoding="utf-8") as pf:
+            json.dump({
+                "artist_index": idx + 1,
+                "request_counter": request_counter,
+                "all_tracks": all_tracks
+            }, pf)
+
+    # Send any remaining tracks as final batch
+    if all_tracks:
+        part_file = f"tracks_final_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(part_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(all_tracks))
+
+        await client.send_document(
+            chat_id=message.chat.id,
+            document=part_file,
+            caption=f"✅ Final batch — Total tracks: {len(all_tracks)}"
+        )
+
+    if os.path.exists(PROGRESS_FILE):
+        os.remove(PROGRESS_FILE)
+
+    await status_msg.edit("✅ Done! All artist track IDs fetched.")
+    os.remove(file_path)
 
