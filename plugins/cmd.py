@@ -140,15 +140,23 @@ import asyncio
 
 
 def check_client(cid, secret):
+    now = time.time()
+    cooldown_end = client_cooldowns.get(cid, 0)
+    if now < cooldown_end:
+        remain = int(cooldown_end - now)
+        return f"⏳ `{cid[:8]}...` is on cooldown for {remain}s."
+
     try:
         auth = SpotifyClientCredentials(client_id=cid, client_secret=secret)
         sp = spotipy.Spotify(auth_manager=auth)
-        sp.search(q="test", limit=1)
+        # Real API request: fetch albums of a popular artist (e.g., "7HCqGPJcQTyGJ2yqntbuyr" = Arijit Singh)
+        sp.artist_albums("7HCqGPJcQTyGJ2yqntbuyr", limit=1)
         return f"✅ `{cid[:8]}...` is working."
     except SpotifyException as e:
         if e.http_status == 429:
-            retry_after = int(e.headers.get("Retry-After", 0))
-            return f"⚠️ `{cid[:8]}...` rate-limited: retry after {retry_after}s."
+            retry_after = int(e.headers.get("Retry-After", 10))
+            client_cooldowns[cid] = time.time() + retry_after
+            return f"⚠️ `{cid[:8]}...` rate-limited! Cooldown for {retry_after}s."
         else:
             return f"❌ `{cid[:8]}...` error: {e}"
     except Exception as ex:
