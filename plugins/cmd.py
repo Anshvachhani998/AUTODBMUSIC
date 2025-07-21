@@ -115,7 +115,7 @@ import aiohttp
 import base64
 import asyncio
 
-client_credentials = [
+clients = [
     ("5561376fd0234838863a8c3a6cbb0865", "fa12e995f56c48a28e28fb056e041d18"),
     ("a8c78174e7524e109d669ee67bbad3f2", "3074289c88ac4071bef5c11ca210a8e5"),
     ("d52e171b692e43f88ea267071f0e838d", "b5ab6396e98545e9bc2e023974d964cc"),
@@ -129,45 +129,48 @@ client_credentials = [
     ("29bb28fe38134e1ab1a512e829e908cb", "1cf618724f244263805fe511ece20518"),
 ]
 
-async def check_credentials(session, client_id, client_secret):
-    auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    headers = {
-        "Authorization": f"Basic {auth}",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-    data = {"grant_type": "client_credentials"}
+# plugins/check_clients_spotipy.py
 
+from pyrogram import Client, filters
+from pyrogram.types import Message
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+from spotipy.exceptions import SpotifyException
+import asyncio
+
+
+async def check_client(cid, secret):
     try:
-        async with session.post("https://accounts.spotify.com/api/token", headers=headers, data=data) as resp:
-            status = resp.status
-            if status == 200:
-                return f"✅ `{client_id}` — Working"
-            elif status == 429:
-                return f"⚠️ `{client_id}` — Rate Limited"
-            elif status in [400, 401]:
-                return f"❌ `{client_id}` — Invalid"
-            else:
-                return f"❓ `{client_id}` — Unknown Error ({status})"
-    except Exception as e:
-        return f"❌ `{client_id}` — Error: {e}"
+        auth = SpotifyClientCredentials(client_id=cid, client_secret=secret)
+        sp = spotipy.Spotify(auth_manager=auth)
+        # Perform a small test query
+        sp.search(q="test", limit=1)
+        return f"✅ `{cid[:8]}...` is working."
+    except SpotifyException as e:
+        if e.http_status == 429:
+            retry_after = int(e.headers.get("Retry-After", 0))
+            return f"⚠️ `{cid[:8]}...` rate-limited: retry after {retry_after}s."
+        else:
+            return f"❌ `{cid[:8]}...` error: {e}"
+    except Exception as ex:
+        return f"❌ `{cid[:8]}...` unexpected error: {ex}"
 
 @Client.on_message(filters.command("test") & filters.private)
-async def check_spotify_clients(_, message: Message):
-    status_msg = await message.reply("🔍 Checking all Spotify client credentials...")
+async def check_clients_cmd(client: Client, message: Message):
+    status_msg = await message.reply("🔍 Checking Spotify client credentials, please wait...")
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [
-            check_credentials(session, cid, secret)
-            for cid, secret in client_credentials
-        ]
-        results = await asyncio.gather(*tasks)
+    results = []
+    for cid, sec in clients:
+        res = await asyncio.to_thread(check_client, cid, sec)
+        results.append(res)
+        await asyncio.sleep(1)  # small delay between checks to avoid hitting limits
 
-    result_text = "\n".join(results)
+    text = "\n".join(results)
+    if len(text) > 4096:
+        text = text[:4090] + "\n\n⚠️ Output truncated..."
 
-    if len(result_text) > 4096:
-        result_text = result_text[:4090] + "\n\n⚠️ Output truncated..."
+    await status_msg.edit_text(f"🎧 **Spotify Client Check Result:**\n\n{text}")
 
-    await status_msg.edit_text(f"🔎 **Spotify Client Check Result:**\n\n{result_text}")
 
 
 
