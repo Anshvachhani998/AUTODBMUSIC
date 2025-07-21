@@ -115,6 +115,17 @@ import aiohttp
 import base64
 import asyncio
 
+# plugins/check_clients_spotipy.py
+
+import time
+import asyncio
+from pyrogram import Client, filters
+from pyrogram.types import Message
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+from spotipy.exceptions import SpotifyException
+
+# Your list of (client_id, client_secret) pairs
 clients = [
     ("5561376fd0234838863a8c3a6cbb0865", "fa12e995f56c48a28e28fb056e041d18"),
     ("a8c78174e7524e109d669ee67bbad3f2", "3074289c88ac4071bef5c11ca210a8e5"),
@@ -129,17 +140,9 @@ clients = [
     ("29bb28fe38134e1ab1a512e829e908cb", "1cf618724f244263805fe511ece20518"),
 ]
 
-# plugins/check_clients_spotipy.py
+client_cooldowns = {}
 
-from pyrogram import Client, filters
-from pyrogram.types import Message
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
-from spotipy.exceptions import SpotifyException
-import asyncio
-
-
-def check_client(cid, secret):
+async def check_client(cid, secret):
     now = time.time()
     cooldown_end = client_cooldowns.get(cid, 0)
     if now < cooldown_end:
@@ -148,35 +151,30 @@ def check_client(cid, secret):
 
     try:
         auth = SpotifyClientCredentials(client_id=cid, client_secret=secret)
-        sp = spotipy.Spotify(auth_manager=auth, retries=0)  # <-- Important
-        sp.artist_albums("7HCqGPJcQTyGJ2yqntbuyr", limit=1)
+        sp = spotipy.Spotify(auth_manager=auth, retries=0)
+        sp.artist_albums("7HCqGPJcQTyGJ2yqntbuyr", limit=1)  # Test request
         return f"✅ `{cid[:8]}...` is working."
     except SpotifyException as e:
         if e.http_status == 429:
             retry_after = int(e.headers.get("Retry-After", 10))
             client_cooldowns[cid] = time.time() + retry_after
-            return f"⚠️ `{cid[:8]}...` rate-limited! Cooldown for {retry_after}s."
+            return f"⚠️ `{cid[:8]}...` rate-limited! Cooldown {retry_after}s."
         else:
             return f"❌ `{cid[:8]}...` error: {e}"
     except Exception as ex:
         return f"❌ `{cid[:8]}...` unexpected error: {ex}"
 
-
 @Client.on_message(filters.command("test") & filters.private)
-async def check_clients_cmd(client, message):
-    status_msg = await message.reply("🔍 Checking Spotify client credentials...")
-
+async def check_clients_cmd(client, message: Message):
+    await message.reply("🔍 Checking all Spotify clients... Please wait.")
     results = []
-    for cid, sec in clients:
-        res = await asyncio.to_thread(check_client, cid, sec)  # await here
-        results.append(res)
-        await asyncio.sleep(1)
 
-    text = "\n".join(results)
-    if len(text) > 4096:
-        text = text[:4090] + "\n\n⚠️ Output truncated..."
+    for cid, secret in clients:
+        status = await check_client(cid, secret)
+        results.append(status)
+        await asyncio.sleep(1.5)  # Avoid hitting rate limit instantly
 
-    await status_msg.edit_text(f"🎧 **Spotify Client Check Result:**\n\n{text}")
+    await message.reply("\n".join(results))
 
 
 
