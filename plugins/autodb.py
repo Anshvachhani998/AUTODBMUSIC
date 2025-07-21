@@ -130,15 +130,9 @@ async def run_tracksssf(client, message):
 
         try:
             spotify_url = f"https://open.spotify.com/track/{track_id}"
-            track_info = extract_track_info(spotify_url)
-            if not track_info:
-                failed_tracks.append(track_id)
-                continue
-
-            title, artist, thumb_url = track_info
 
             await status_msg.edit(
-                f"⬇️ Downloading {idx} of {total}: **{title}**\n"
+                f"⬇️ Downloading {idx} of {total}\n"
                 f"✅ Sent: {sent_count}\n"
                 f"⏭️ Skipped: {len(skipped_tracks)}\n"
                 f"❌ Failed: {len(failed_tracks)}\n"
@@ -146,7 +140,8 @@ async def run_tracksssf(client, message):
                 reply_markup=cancel_keyboard
             )
 
-            song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
+            title, artist, duration, thumb_url, song_url = await get_song_download_url_by_spotify_url(spotify_url)
+            song_title = title
             if not song_url:
                 failed_tracks.append(track_id)
                 continue
@@ -215,13 +210,9 @@ async def run_tracksssf(client, message):
 
             try:
                 spotify_url = f"https://open.spotify.com/track/{track_id}"
-                track_info = extract_track_info(spotify_url)
-                if not track_info:
-                    retry_failed.append(track_id)
-                    continue
 
-                title, artist, thumb_url = track_info
-                song_title, song_url = await get_song_download_url_by_spotify_url(spotify_url)
+                title, artist, duration, thumb_url, song_url = await get_song_download_url_by_spotify_url(spotify_url)
+                song_title = title
                 if not song_url:
                     retry_failed.append(track_id)
                     continue
@@ -267,7 +258,6 @@ async def run_tracksssf(client, message):
         )
         failed_tracks = retry_failed
 
-    # Final summary
     if not run_cancel_flags.get(key):
         end_time = time.time()
         formatted_time = format_seconds(int(end_time - start_time))
