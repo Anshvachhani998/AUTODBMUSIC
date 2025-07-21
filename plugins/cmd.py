@@ -181,6 +181,7 @@ async def check_clients_cmd(client, message):
 
 
 
+client_cooldowns = {}
 
 
 from pyrogram import Client, filters
