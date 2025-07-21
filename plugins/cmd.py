@@ -139,11 +139,10 @@ from spotipy.exceptions import SpotifyException
 import asyncio
 
 
-async def check_client(cid, secret):
+def check_client(cid, secret):
     try:
         auth = SpotifyClientCredentials(client_id=cid, client_secret=secret)
         sp = spotipy.Spotify(auth_manager=auth)
-        # Perform a small test query
         sp.search(q="test", limit=1)
         return f"✅ `{cid[:8]}...` is working."
     except SpotifyException as e:
@@ -156,20 +155,21 @@ async def check_client(cid, secret):
         return f"❌ `{cid[:8]}...` unexpected error: {ex}"
 
 @Client.on_message(filters.command("test") & filters.private)
-async def check_clients_cmd(client: Client, message: Message):
-    status_msg = await message.reply("🔍 Checking Spotify client credentials, please wait...")
+async def check_clients_cmd(client, message):
+    status_msg = await message.reply("🔍 Checking Spotify client credentials...")
 
     results = []
     for cid, sec in clients:
-        res = await asyncio.to_thread(check_client, cid, sec)
+        res = await asyncio.to_thread(check_client, cid, sec)  # await here
         results.append(res)
-        await asyncio.sleep(1)  # small delay between checks to avoid hitting limits
+        await asyncio.sleep(1)
 
     text = "\n".join(results)
     if len(text) > 4096:
         text = text[:4090] + "\n\n⚠️ Output truncated..."
 
     await status_msg.edit_text(f"🎧 **Spotify Client Check Result:**\n\n{text}")
+
 
 
 
