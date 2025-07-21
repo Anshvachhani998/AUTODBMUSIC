@@ -136,15 +136,18 @@ async def get_song_download_url_by_spotify_url(url, max_retries=3, retry_delay=3
                     timeout=10
                 )
                 if result and result.get('download'):
-                    song_title = f"{result['artist']} - {result['title']}"
-                    return song_title, result['download']
+                    song_title = f"{result['title']}"
+                    artist = f"{result['artist']}"
+                    duration = f"{result['duration']}"
+                    img_url = f"{result['image']}"
+                    return song_title, artist, duration, img_url, result['download']
             else:
-                song_title, song_url = await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     spotify_download_secondary(url),
                     timeout=20
                 )
-                if song_url:
-                    return song_title, song_url
+                if result and result.get('download'):
+                    return result['title'], result['artist'], result['duration'], result['image'], result['download']
 
         except Exception as e:
             logger.info(f"Attempt {attempt}: {first} method failed with error: {e}")
@@ -157,14 +160,17 @@ async def get_song_download_url_by_spotify_url(url, max_retries=3, retry_delay=3
                 )
                 if result and result.get('download'):
                     song_title = f"{result['title']}"
-                    return song_title, result['download']
+                    artist = f"{result['artist']}"
+                    duration = f"{result['duration']}"
+                    img_url = f"{result['image']}"
+                    return song_title, artist, duration, img_url, result['download']
             else:
-                song_title, song_url = await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     spotify_download_secondary(url),
                     timeout=20
                 )
-                if song_url:
-                    return song_title, song_url
+                if result and result.get('download'):
+                    return result['title'], result['artist'], result['duration'], result['image'], result['download']
 
         except Exception as e:
             logger.info(f"Attempt {attempt}: {second} method failed with error: {e}")
@@ -172,8 +178,7 @@ async def get_song_download_url_by_spotify_url(url, max_retries=3, retry_delay=3
         logger.info(f"Attempt {attempt} failed, retrying after {retry_delay} seconds...")
         await asyncio.sleep(retry_delay)
 
-    # 3 attempts ke baad bhi nahi mila toh None return karo
-    return None, None
+    return None, None, None, None, None
 
 
 
@@ -183,7 +188,7 @@ async def spotify_download_secondary(url: str):
     def spotmate_flow():
         sm = SpotMate()
         info = sm.info(url)
-
+        
         artists = []
         if info.get('artists'):
             for a in info['artists']:
@@ -191,7 +196,23 @@ async def spotify_download_secondary(url: str):
         artist_name = ", ".join(artists) if artists else "Unknown"
 
         title = info.get('name') or info.get('title') or "Unknown"
-        
+        image = (
+            info.get('cover') or
+            info.get('cover_url') or
+            (info.get("album", {}).get("images", [{}])[0].get("url")) or
+            None
+        )
+        duration_ms = info.get('duration_ms') or info.get('duration') or None
+
+        # Convert milliseconds to mm:ss
+        def ms_to_minutes(ms):
+            seconds = int(ms // 1000)
+            minutes = seconds // 60
+            seconds = seconds % 60
+            return f"{minutes}:{seconds:02}"
+
+        duration = ms_to_minutes(duration_ms) if duration_ms else "Unknown"
+
         result = sm.convert(url)
         if not result or 'url' not in result or not result['url']:
             raise Exception("SpotMate convert failed: No URL found.")
@@ -199,10 +220,15 @@ async def spotify_download_secondary(url: str):
         download_url = result['url']
         sm.clear()
 
-        return title, download_url
+        return {
+            "title": title,
+            "artist": artist_name,
+            "image": image,
+            "duration": duration,
+            "download": download_url
+        }
 
     return await loop.run_in_executor(None, spotmate_flow)
-
 
 
 
