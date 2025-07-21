@@ -148,8 +148,7 @@ def check_client(cid, secret):
 
     try:
         auth = SpotifyClientCredentials(client_id=cid, client_secret=secret)
-        sp = spotipy.Spotify(auth_manager=auth)
-        # Real API request: fetch albums of a popular artist (e.g., "7HCqGPJcQTyGJ2yqntbuyr" = Arijit Singh)
+        sp = spotipy.Spotify(auth_manager=auth, retries=0)  # <-- Important
         sp.artist_albums("7HCqGPJcQTyGJ2yqntbuyr", limit=1)
         return f"✅ `{cid[:8]}...` is working."
     except SpotifyException as e:
@@ -161,6 +160,7 @@ def check_client(cid, secret):
             return f"❌ `{cid[:8]}...` error: {e}"
     except Exception as ex:
         return f"❌ `{cid[:8]}...` unexpected error: {ex}"
+
 
 @Client.on_message(filters.command("test") & filters.private)
 async def check_clients_cmd(client, message):
