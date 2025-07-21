@@ -269,7 +269,7 @@ async def check_tracks_in_db(client, message):
             print(f"Error checking track {track_id}: {e}")
             continue
 
-    batch_size = 5000
+    batch_size = 10000
     batches = [new_tracks[i:i + batch_size] for i in range(0, len(new_tracks), batch_size)]
 
     for i, batch in enumerate(batches, 1):
