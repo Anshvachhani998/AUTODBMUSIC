@@ -302,8 +302,8 @@ async def check_tracks_in_db(client, message):
     )
 
 
-@Client.on_message(filters.command("checkall") & filters.private & filters.reply)
-async def check_tracks_in_db(client, message):
+@Client.on_message(filters.command("checkall2") & filters.private & filters.reply)
+async def check_tracks_csin_db(client, message):
     if not message.reply_to_message.document:
         await message.reply("❗ Please reply to a `.txt` file containing track IDs (one per line).")
         return
