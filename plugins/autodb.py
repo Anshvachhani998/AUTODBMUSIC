@@ -15,6 +15,8 @@ import random
 import asyncio
 from info import DUMP_CHANNEL_ID, FAILD_CHAT_ID
 from database.db import db
+from datetime import datetime
+import pytz
 
 
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +35,18 @@ run_cancel_flags = {}
 output_dir = os.path.join(os.getcwd(), "downloads")
 os.makedirs(output_dir, exist_ok=True)
 
+@Client.on_message(filters.command("t") & filters.private)
+async def show_run_flags(client, message):
+    if not run_cancel_flags:
+        await message.reply_text("🟢 No running tasks currently.")
+        return
+
+    text = "⚙️ **Current run_cancel_flags status:**\n\n"
+    for key, val in run_cancel_flags.items():
+        text += f"• `{key}` : `{val}`\n"
+
+    await message.reply_text(text)
+    
 
 def extract_track_info(spotify_url: str):
     parsed = urlparse(spotify_url)
@@ -74,18 +88,7 @@ def format_seconds(seconds: int) -> str:
 
     return ' '.join(parts)
 
-@Client.on_message(filters.command("run") & filters.reply)
-async def run_tracksssf(client, message):
-    if not message.reply_to_message.document:
-        await message.reply("⚠️ Please reply to a `.txt` file containing track IDs.")
-        return
-
-    file = await client.download_media(message.reply_to_message.document)
-    user_id = message.from_user.id
-
-    with open(file, "r") as f:
-        track_ids = [line.strip() for line in f if line.strip()]
-
+async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_id):
     total = len(track_ids)
     sent_count = 0
     failed_tracks = []
@@ -99,19 +102,50 @@ async def run_tracksssf(client, message):
     )
 
     start_time = time.time()
+    ist = pytz.timezone('Asia/Kolkata')
+    now_ist = datetime.now(ist)
 
-    status_msg = await message.reply(
+    now_ist_str = now_ist.strftime("%Y-%m-%d %H:%M:%S %z")
+    logger.info(f"{now_ist_str}")
+
+    status_msg = await client.send_message(
+        user_id,
         f"📂 **Batch Download Started!**\n"
         f"🎵 Total: **{total}**\n"
         f"✅ Sent: **0**\n"
         f"⏳ Remaining: **{total}**",
         reply_markup=cancel_keyboard
     )
+    
+    await db.tasks_collection.update_one(
+        {"_id": task_id},
+        {"$set": {
+            "status": "running",
+            "sent_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "updated_at": now_ist_str
+        }}
+    )
 
     for idx, track_id in enumerate(track_ids, 1):
         if run_cancel_flags.get(key):
             end_time = time.time()
             formatted_time = format_seconds(int(end_time - start_time))
+
+            # Update DB as cancelled
+            await db.tasks_collection.update_one(
+                {"_id": task_id},
+                {"$set": {
+                    "status": "cancelled",
+                    "sent_count": sent_count,
+                    "skipped_count": len(skipped_tracks),
+                    "failed_count": len(failed_tracks),
+                    "time_taken": formatted_time,
+                    "updated_at": now_ist_str
+                }}
+            )
+
             await status_msg.edit(
                 f"❌ Batch cancelled by user.\n"
                 f"🎵 Total: **{total}**\n"
@@ -171,6 +205,18 @@ async def run_tracksssf(client, message):
             await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
             sent_count += 1
 
+            # Har 10 sent tracks par DB update karo
+            if sent_count % 2 == 0 or idx == total:
+                await db.tasks_collection.update_one(
+                    {"_id": task_id},
+                    {"$set": {
+                        "sent_count": sent_count,
+                        "skipped_count": len(skipped_tracks),
+                        "failed_count": len(failed_tracks),
+                        "updated_at": now_ist_str
+                    }}
+                )
+
             await status_msg.edit(
                 f"⬇️ Downloading {idx} of {total}: **{song_title}**\n"
                 f"✅ Sent: {sent_count}\n"
@@ -190,7 +236,7 @@ async def run_tracksssf(client, message):
             logging.error(f"Error with {track_id}: {e}")
             failed_tracks.append(track_id)
 
-    # ✅ Retry logic for failed
+    # Retry logic agar aapka pehle se hai to wahi use karo
     if failed_tracks:
         await asyncio.sleep(10)
         await client.send_message(user_id, f"🔁 Retrying {len(failed_tracks)} failed tracks...")
@@ -258,9 +304,22 @@ async def run_tracksssf(client, message):
         )
         failed_tracks = retry_failed
 
+    # Final DB update jab batch complete ho jaye
     if not run_cancel_flags.get(key):
         end_time = time.time()
         formatted_time = format_seconds(int(end_time - start_time))
+        await db.tasks_collection.update_one(
+            {"_id": task_id},
+            {"$set": {
+                "status": "done",
+                "sent_count": sent_count,
+                "skipped_count": len(skipped_tracks),
+                "failed_count": len(failed_tracks),
+                "time_taken": formatted_time,
+                "updated_at": now_ist_str
+            }}
+        )
+
         await status_msg.edit(
             f"✅ **Batch Done!**\n"
             f"🎵 Total: **{total}**\n"
@@ -270,10 +329,7 @@ async def run_tracksssf(client, message):
             f"⏳ Time Taken: **{formatted_time}**",
             reply_markup=None
         )
-        await client.send_message(
-            user_id,
-            f"**🔁 Task complete**"
-        )
+        await client.send_message(user_id, "**🔁 Task complete**")
 
     if failed_tracks:
         import tempfile
@@ -294,10 +350,9 @@ async def run_tracksssf(client, message):
         os.remove(failed_file_path)
 
     run_cancel_flags.pop(key, None)
-    os.remove(file)
 
 
-# Cancel Button handler
+
 @Client.on_callback_query(filters.regex(r"cancel_run:(\d+)"))
 async def cancel_run_batch(client, callback_query):
     user_id = int(callback_query.data.split(":")[1])
