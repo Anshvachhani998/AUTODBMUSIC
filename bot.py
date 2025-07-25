@@ -26,6 +26,8 @@ logging.getLogger("pyrogram").setLevel(logging.ERROR)
 pyroutils.MIN_CHAT_ID = -999999999999
 pyroutils.MIN_CHANNEL_ID = -100999999999999
 
+DOWNLOAD_DIR = "/app/downloads"
+
 
 class Bot(Client):
     def __init__(self):
