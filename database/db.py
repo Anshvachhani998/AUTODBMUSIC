@@ -1,5 +1,5 @@
 import motor.motor_asyncio
-from info import MONGO_URI, MONGO_NAME, MAINTENANCE_MODE
+from info import MONGO_URI, MONGO_NAME, MAINTENANCE_MODE, COLLECTION_NAME
 from datetime import datetime, timedelta
 
 class Database:
