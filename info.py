@@ -6,7 +6,7 @@ API_HASH = os.getenv("API_HASH", "171e6f1bf66ed8dcc5140fbe827b6b08")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7743380848:AAFid7QLtW461d0Ozloo725YqvKpHRF_d1A")
 LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", "-1002284232975"))
 DUMP_CHANNEL_ID = int(os.getenv("DUMP_CHANNEL_ID", "-1002890289206"))
-
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "media")
 FAILD_CHAT_ID = int(os.getenv("FAILD_CHAT_ID", "-1002590983675"))
 
 PORT = int(os.getenv("PORT", "8080"))
