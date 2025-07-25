@@ -13,7 +13,7 @@ from datetime import date, datetime
 from aiohttp import web
 from pyrogram import Client, __version__, filters, types, utils as pyroutils
 from pyrogram.raw.all import layer
-
+from plugins.task import task_runner_loop
 from plugins import web_server
 from info import SESSION, API_ID, API_HASH, BOT_TOKEN, LOG_CHANNEL, PORT, USER_SESSION, ADMINS
 
@@ -27,8 +27,6 @@ pyroutils.MIN_CHAT_ID = -999999999999
 pyroutils.MIN_CHANNEL_ID = -100999999999999
 
 
-
-# ------------------ Bot Class ------------------ #
 class Bot(Client):
     def __init__(self):
         super().__init__(
@@ -38,28 +36,35 @@ class Bot(Client):
             bot_token=BOT_TOKEN,
             workers=1000,
             plugins={"root": "plugins"},
-            sleep_threshold=10, 
+            sleep_threshold=10,
             max_concurrent_transmissions=6
         )
 
     async def start(self):
         await super().start()
+
         me = await self.get_me()
         logging.info(f"🤖 {me.first_name} (@{me.username}) running on Pyrogram v{__version__} (Layer {layer})")
-       
+        asyncio.create_task(task_runner_loop(self, DOWNLOAD_DIR))
         tz = pytz.timezone('Asia/Kolkata')
         today = date.today()
         now = datetime.now(tz)
-        time = now.strftime("%H:%M:%S %p")
-        await self.send_message(chat_id=LOG_CHANNEL, text=f"✅ Bot Restarted! 📅 Date: {today} 🕒 Time: {time}")
-        app = web.AppRunner(await web_server())
-        await app.setup()
-        await web.TCPSite(app, "0.0.0.0", PORT).start()
+        time_str = now.strftime("%H:%M:%S %p")
+
+        await self.send_message(chat_id=LOG_CHANNEL, text=f"✅ Bot Restarted! 📅 Date: {today} 🕒 Time: {time_str}")
+
+        # Setup and start aiohttp web server
+        app_runner = web.AppRunner(await web_server())
+        await app_runner.setup()
+        site = web.TCPSite(app_runner, "0.0.0.0", PORT)
+        await site.start()
+
         logging.info(f"🌐 Web Server Running on PORT {PORT}")
 
     async def stop(self, *args):
         await super().stop()
         logging.info("🛑 Bot Stopped.")
+
 
 app = Bot()
 app.run()
