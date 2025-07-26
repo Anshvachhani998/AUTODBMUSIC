@@ -124,7 +124,7 @@ async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_i
             "sent_count": 0,
             "skipped_count": 0,
             "failed_count": 0,
-            "updated_at": now_ist_str
+            "updated_at": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S %z")
         }}
     )
 
@@ -142,7 +142,7 @@ async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_i
                     "skipped_count": len(skipped_tracks),
                     "failed_count": len(failed_tracks),
                     "time_taken": formatted_time,
-                    "updated_at": now_ist_str
+                    "updated_at": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S %z")
                 }}
             )
 
@@ -205,7 +205,6 @@ async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_i
             await db.save_dump_file_id(track_id, dump_msg.audio.file_id)
             sent_count += 1
 
-            # Har 10 sent tracks par DB update karo
             if sent_count % 2 == 0 or idx == total:
                 await db.tasks_collection.update_one(
                     {"_id": task_id},
@@ -213,7 +212,7 @@ async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_i
                         "sent_count": sent_count,
                         "skipped_count": len(skipped_tracks),
                         "failed_count": len(failed_tracks),
-                        "updated_at": now_ist_str
+                        "updated_at": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S %z")
                     }}
                 )
 
@@ -304,7 +303,7 @@ async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_i
         )
         failed_tracks = retry_failed
 
-    # Final DB update jab batch complete ho jaye
+
     if not run_cancel_flags.get(key):
         end_time = time.time()
         formatted_time = format_seconds(int(end_time - start_time))
@@ -316,7 +315,7 @@ async def run_batch_from_track_ids(client, track_ids: list, user_id: int, task_i
                 "skipped_count": len(skipped_tracks),
                 "failed_count": len(failed_tracks),
                 "time_taken": formatted_time,
-                "updated_at": now_ist_str
+                "updated_at": datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S %z")
             }}
         )
 
