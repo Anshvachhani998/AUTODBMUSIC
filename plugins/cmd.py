@@ -233,6 +233,10 @@ async def send_combined_file(client, message):
         await message.reply("⚠️ No combined file found yet.")
 
 
+
+from datetime import datetime
+
+
 @Client.on_message(filters.command("checkall") & filters.private & filters.reply)
 async def check_tracks_in_db(client, message):
     if not message.reply_to_message.document:
@@ -281,7 +285,8 @@ async def check_tracks_in_db(client, message):
     batches = [new_tracks[i:i + batch_size] for i in range(0, len(new_tracks), batch_size)]
 
     for i, batch in enumerate(batches, 1):
-        filename = f"new_tracks_part_{i}.txt"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"new_tracks_{timestamp}_part_{i}.txt"
         with open(filename, "w", encoding="utf-8") as f:
             f.write("\n".join(batch))
 
