@@ -1,3 +1,4 @@
+
 import os
 import asyncio
 import aiohttp
@@ -79,7 +80,8 @@ async def process_next_task(client, download_dir, bot_id: str):
 
 async def task_runner_loop(client, download_dir):
     while True:
-        found = await process_next_task(client, download_dir, BOT_TOKEN)
+        bot_id = BOT_TOKEN.split(":")[0]
+        found = await process_next_task(client, download_dir, bot_id)
         if not found:
             logging.info("No task found, sleeping for 10 seconds...")
             await asyncio.sleep(10)
