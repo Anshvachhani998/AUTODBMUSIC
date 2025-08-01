@@ -41,9 +41,12 @@ async def process_next_task(client, download_dir, bot_id: str):
     if run_cancel_flags:
         logging.info("Another task is already running, skipping new task processing.")
         return False
-        
+
     task = await db.tasks_collection.find_one_and_update(
-        {"status": {"$in": ["pending", "processing", "running"]}, "bot_id": bot_id},
+        {
+            "status": {"$in": ["pending", "processing", "running"]},
+            "bot_id": {"$regex": f"^{bot_id}:"}
+        },
         {"$set": {"status": "processing"}},
         sort=[("created_at", 1)],
         return_document=True
@@ -53,10 +56,13 @@ async def process_next_task(client, download_dir, bot_id: str):
         logging.info(f"No pending task found for bot_id {bot_id}.")
         return False
 
-    logging.info(f"Found task: {task['_id']} for user  on bot {bot_id}")
+    logging.info(f"Found task: {task['_id']} for user on bot {bot_id}")
     file_url = task["file_url"]
     user_id = OWNER_ID
-    file_path = await download_track_ids_file(file_url, save_path=os.path.join(download_dir, f"{task['_id']}.txt"))
+    file_path = await download_track_ids_file(
+        file_url, save_path=os.path.join(download_dir, f"{task['_id']}.txt")
+    )
+
     if not file_path:
         logging.error("Failed to download track IDs file, marking task as failed.")
         await db.tasks_collection.update_one({"_id": task["_id"]}, {"$set": {"status": "failed"}})
@@ -73,7 +79,10 @@ async def process_next_task(client, download_dir, bot_id: str):
         await run_batch_from_track_ids(client, track_ids, user_id, task["_id"])
     except Exception as e:
         logging.error(f"Error processing task {task['_id']}: {e}")
-        await db.tasks_collection.update_one({"_id": task["_id"]}, {"$set": {"status": "failed", "error": str(e)}})
+        await db.tasks_collection.update_one(
+            {"_id": task["_id"]},
+            {"$set": {"status": "failed", "error": str(e)}}
+        )
 
     return True
 
